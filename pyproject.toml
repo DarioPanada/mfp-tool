@@ -1,0 +1,35 @@
+[project]
+name = "mfp-tool"
+version = "0.1.0"
+description = "MyFitnessPal from the command line, authenticated by a saved web session cookie"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+mfp = "mfp_tool.cli:main_exit"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.14", "mypy>=1.18"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
