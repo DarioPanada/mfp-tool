@@ -3,6 +3,10 @@
 MFP's website keeps the login in the `__Secure-next-auth.session-token` cookie and refreshes it
 on most responses. The refresh token inside is single-use, so once MFP has issued a new cookie the
 old one stops working: every cookie MFP sends back is written to the token file straight away.
+
+MFP also wants the device cookies (`anon-device-id` and the rest) it hands a first-time visitor:
+a logged-in request without them gets the homepage HTML instead of JSON. The client picks them up
+with one anonymous request before logging in.
 """
 
 from __future__ import annotations
@@ -91,21 +95,30 @@ class Client:
         self.csrf: str | None = None
         self.username: str | None = None
 
-    def _absorb(self, headers: Any) -> None:
+    def _absorb(self, headers: Any, session: bool = True) -> None:
         set_cookies = headers.get_all("Set-Cookie") or []
         for header in set_cookies:
             for name, morsel in SimpleCookie(header).items():
                 if name != COOKIE and not name.startswith(COOKIE + "."):
                     self.cookies[name] = morsel.value
+        if not session:
+            return
         new = session_token_from(set_cookies)
         if new and new != self.token:
             self.store.save(new)
             self.token = new
 
-    def request(self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None) -> Any:
+    def request(
+        self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None, session: bool = True
+    ) -> Any:
+        """Calls MFP and returns the decoded JSON; `session=False` leaves the session cookie out."""
         url = self.base_url + path + ("?" + urllib.parse.urlencode(query) if query else "")
-        cookie = "; ".join([f"{COOKIE}={self.token}", *(f"{k}={v}" for k, v in self.cookies.items())])
-        headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Cookie": cookie}
+        cookies = [f"{k}={v}" for k, v in self.cookies.items()]
+        if session:
+            cookies.insert(0, f"{COOKIE}={self.token}")
+        headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+        if cookies:
+            headers["Cookie"] = "; ".join(cookies)
         if self.csrf:
             headers["X-CSRF-Token"] = self.csrf
         data = None
@@ -115,16 +128,22 @@ class Client:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)  # noqa: S310 - https only, see __init__
         try:
             with self.opener(req, timeout=30) as resp:
-                self._absorb(resp.headers)
+                self._absorb(resp.headers, session)
                 raw = resp.read()
         except urllib.error.HTTPError as e:
-            self._absorb(e.headers)
+            self._absorb(e.headers, session)
             detail = e.read()[:300].decode(errors="replace")
             raise MfpError(f"{method} {path}: HTTP {e.code} {detail}") from None
-        return json.loads(raw) if raw else None
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            raise MfpError(f"{method} {path}: expected JSON, got {raw[:60]!r}") from None
 
     def login(self) -> str:
         """Checks the session (which also refreshes the cookie) and fetches a CSRF token."""
+        self.request("GET", "/api/auth/session", session=False)  # device cookies, see the module docstring
         user = (self.request("GET", "/api/auth/session") or {}).get("user") or {}
         name = user.get("username") or user.get("name")
         if not name:

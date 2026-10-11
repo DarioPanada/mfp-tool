@@ -25,7 +25,7 @@ def headers(*set_cookies: str) -> Message:
 class FakeResponse:
     def __init__(self, body: Any, hdrs: Message) -> None:
         self.headers = hdrs
-        self._body = json.dumps(body).encode()
+        self._body = body if isinstance(body, bytes) else json.dumps(body).encode()
 
     def read(self) -> bytes:
         return self._body
@@ -37,8 +37,16 @@ class FakeResponse:
         pass
 
 
+DEVICE_COOKIE = "anon-device-id=device; Path=/; Secure"
+HOMEPAGE = b"<!DOCTYPE html><html><head><title>Free Calorie Counter</title></head></html>"
+
+
 class FakeMfp:
-    """Answers by path and records each request."""
+    """Answers by path and records each request.
+
+    Like MFP: an anonymous session check hands out the device cookie, and a logged-in request
+    without it gets the homepage HTML.
+    """
 
     def __init__(self, routes: dict[str, tuple[Any, list[str]]]) -> None:
         self.routes = routes
@@ -47,6 +55,12 @@ class FakeMfp:
     def __call__(self, req: urllib.request.Request, timeout: float) -> FakeResponse:
         self.requests.append(req)
         path = req.full_url.split("myfitnesspal.com", 1)[1].split("?", 1)[0]
+        sent = req.get_header("Cookie") or ""
+        if f"{COOKIE}=" not in sent:
+            assert path == "/api/auth/session"
+            return FakeResponse({}, headers(DEVICE_COOKIE))
+        if "anon-device-id=device" not in sent:
+            return FakeResponse(HOMEPAGE, headers())
         body, cookies = self.routes[path]
         if isinstance(body, int):
             raise urllib.error.HTTPError(req.full_url, body, "err", headers(*cookies), io.BytesIO(b'{"message":"no"}'))
@@ -95,7 +109,7 @@ def test_refreshed_cookie_is_saved_owner_only(token_file: Path) -> None:
     assert token_file.read_text() == "new-token"
     assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
     # The next request already uses the new token.
-    assert f"{COOKIE}=new-token" in (fake.requests[1].get_header("Cookie") or "")
+    assert f"{COOKIE}=new-token" in (fake.requests[2].get_header("Cookie") or "")
 
 
 def test_unchanged_cookie_is_not_rewritten(token_file: Path) -> None:
@@ -134,3 +148,19 @@ def test_cli_reports_expired_session_with_exit_2(token_file: Path, capsys: pytes
     assert main(["--token-file", str(token_file), "session"], opener=fake) == EXIT_EXPIRED
     err = capsys.readouterr().err
     assert "expired" in err and "old-token" not in err
+
+
+def test_login_first_fetches_device_cookies_without_the_session(token_file: Path) -> None:
+    fake = FakeMfp({"/api/auth/session": (SESSION, []), "/api/auth/csrf": (CSRF, [])})
+    assert Client(TokenStore(token_file), opener=fake).login() == "someone"
+    assert fake.requests[0].get_header("Cookie") is None
+    for req in fake.requests[1:]:
+        cookie = req.get_header("Cookie") or ""
+        assert f"{COOKIE}=old-token" in cookie and "anon-device-id=device" in cookie
+
+
+def test_html_instead_of_json_is_an_mfp_error(token_file: Path) -> None:
+    client = Client(TokenStore(token_file), opener=FakeMfp({"/api/auth/session": (SESSION, [])}))
+    with pytest.raises(MfpError, match="expected JSON") as e:
+        client.request("GET", "/api/auth/session")  # no device cookie yet
+    assert "old-token" not in str(e.value)
