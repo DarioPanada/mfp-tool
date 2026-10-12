@@ -1,6 +1,6 @@
 # mfp-tool
 
-MyFitnessPal from the command line. Built so a Claude Code session can read (and later log) the
+MyFitnessPal from the command line. Built so a Claude Code session can read and log the
 food diary on a machine where a browser login is not possible.
 
 MFP's login needs a browser (reCAPTCHA), so the tool runs on a session cookie copied from one.
@@ -53,8 +53,14 @@ The session lasts 30 days from its last use. When it has expired the tool exits 
 ```sh
 mfp session              # check the login, refresh the cookie
 mfp diary [YYYY-MM-DD]   # food entries for a day (default today), as JSON
+mfp search <text>        # foods: id, version, description, brand, kcal, serving sizes
+mfp log <food id> <food version> --meal Lunch --servings 1 --value 100 --unit g --multiplier 1
+mfp delete <entry id>    # remove a diary entry
 mfp skill                # the Claude Code skill (SKILL.md), see above
 ```
+
+`--meal` is a meal name looked up in today's diary (and the target day's), or a meal position
+(0 is Breakfast). The serving size flags come from one of the food's `serving_sizes`.
 
 Exit status: 0 ok, 1 error, 2 the session has expired.
 
