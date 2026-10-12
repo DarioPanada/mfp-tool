@@ -283,3 +283,9 @@ def test_delete_rejects_anything_but_an_id_before_calling_mfp(token_file: Path, 
     with pytest.raises(ValueError):
         Client(TokenStore(token_file), opener=fake).delete(entry_id)
     assert fake.requests == []
+
+
+def test_requests_carry_the_sites_referer(token_file: Path) -> None:
+    fake = FakeMfp({"/api/auth/session": (SESSION, []), "/api/auth/csrf": (CSRF, [])})
+    Client(TokenStore(token_file), opener=fake).login()
+    assert {r.get_header("Referer") for r in fake.requests} == {"https://www.myfitnesspal.com/"}

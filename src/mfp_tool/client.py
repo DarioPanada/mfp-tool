@@ -117,7 +117,8 @@ class Client:
         cookies = [f"{k}={v}" for k, v in self.cookies.items()]
         if session:
             cookies.insert(0, f"{COOKIE}={self.token}")
-        headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+        # Food search (/api/nutrition) answers 404 {"items":[]} to a request without a Referer.
+        headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Referer": self.base_url + "/"}
         if cookies:
             headers["Cookie"] = "; ".join(cookies)
         if self.csrf:
