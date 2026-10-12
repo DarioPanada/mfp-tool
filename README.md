@@ -12,6 +12,17 @@ No dependencies beyond the Python standard library.
 uv tool install git+https://github.com/DarioPanada/mfp-tool
 ```
 
+## Claude Code skill
+
+The package ships a skill that tells Claude Code when and how to use `mfp` (and never to touch the
+cookie). Install it for every session on the machine:
+
+```sh
+mkdir -p ~/.claude/skills/mfp && mfp skill > ~/.claude/skills/mfp/SKILL.md
+```
+
+Rerun it after upgrading the tool.
+
 ## The session cookie
 
 The tool reads the cookie `__Secure-next-auth.session-token` from `~/.config/mfp/session-token`
@@ -42,6 +53,7 @@ The session lasts 30 days from its last use. When it has expired the tool exits 
 ```sh
 mfp session              # check the login, refresh the cookie
 mfp diary [YYYY-MM-DD]   # food entries for a day (default today), as JSON
+mfp skill                # the Claude Code skill (SKILL.md), see above
 ```
 
 Exit status: 0 ok, 1 error, 2 the session has expired.

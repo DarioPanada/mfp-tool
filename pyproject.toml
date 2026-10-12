@@ -1,6 +1,6 @@
 [project]
 name = "mfp-tool"
-version = "0.1.0"
+version = "0.2.0"
 description = "MyFitnessPal from the command line, authenticated by a saved web session cookie"
 readme = "README.md"
 requires-python = ">=3.12"

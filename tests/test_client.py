@@ -164,3 +164,12 @@ def test_html_instead_of_json_is_an_mfp_error(token_file: Path) -> None:
     with pytest.raises(MfpError, match="expected JSON") as e:
         client.request("GET", "/api/auth/session")  # no device cookie yet
     assert "old-token" not in str(e.value)
+
+
+def test_skill_prints_without_a_login(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def no_network(req: urllib.request.Request, timeout: float) -> FakeResponse:
+        raise AssertionError("mfp skill must not call MFP")
+
+    assert main(["--token-file", str(tmp_path / "missing"), "skill"], opener=no_network) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("---\nname: mfp\n") and "session-token" in out
