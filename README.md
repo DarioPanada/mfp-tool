@@ -57,12 +57,18 @@ mfp search <text>        # foods: id, version, description, brand, kcal, serving
 mfp log <food id> <food version> --meal Lunch --servings 1 --value 100 --unit g --multiplier 1
 mfp delete <entry id>    # remove a diary entry
 mfp skill                # the Claude Code skill (SKILL.md), see above
+mfp manifest             # this tool described for a host such as the cockpit, as JSON
 ```
 
 `--meal` is a meal name looked up in today's diary (and the target day's), or a meal position
 (0 is Breakfast). The serving size flags come from one of the food's `serving_sizes`.
 
 Exit status: 0 ok, 1 error, 2 the session has expired.
+
+`mfp manifest` needs no login. It prints `manifest` (format version, 1), `name`, `version`,
+`description`, `commands` (each with `name`, `usage`, `summary` and `writes`, true for the commands
+that change the diary) and `skill` (the text of `mfp skill`). The cockpit reads it to list the tool
+and to set up the conversations of a project that uses it.
 
 ## Development
 

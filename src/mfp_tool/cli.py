@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.metadata
 import importlib.resources
 import json
 import os
@@ -16,8 +17,28 @@ from .client import DEFAULT_TOKEN_FILE, Client, MfpError, Opener, SessionExpired
 EXIT_EXPIRED = 2
 EXIT_ERROR = 1
 
+# What `mfp manifest` tells a host such as the cockpit: every command Claude may run, and which
+# ones change the diary (a host asks before running those).
+COMMANDS = [
+    {"name": "session", "usage": "mfp session", "summary": "check the login, refresh the cookie", "writes": False},
+    {"name": "diary", "usage": "mfp diary [YYYY-MM-DD]", "summary": "food entries for a day, as JSON", "writes": False},
+    {
+        "name": "search",
+        "usage": "mfp search <text> [--max N] [--page P] [--country CC]",
+        "summary": "search MFP's food database, as JSON",
+        "writes": False,
+    },
+    {
+        "name": "log",
+        "usage": "mfp log <food id> <food version> --meal M --servings N --value V --unit U --multiplier X [--date D]",
+        "summary": "add a food entry to the diary",
+        "writes": True,
+    },
+    {"name": "delete", "usage": "mfp delete <entry id>", "summary": "delete a diary entry", "writes": True},
+]
 
-def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen) -> int:
+
+def build_parser(today: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mfp", description="MyFitnessPal from the command line.")
     parser.add_argument(
         "--token-file",
@@ -25,7 +46,6 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
         default=Path(os.environ.get("MFP_TOKEN_FILE", DEFAULT_TOKEN_FILE)),
         help="session cookie file (default: $MFP_TOKEN_FILE or %(default)s)",
     )
-    today = datetime.date.today().isoformat()
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("session", help="check the login and keep the cookie fresh")
     diary = sub.add_parser("diary", help="food diary for a day, as JSON")
@@ -47,10 +67,19 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
     delete = sub.add_parser("delete", help="delete a diary entry by its id")
     delete.add_argument("entry_id")
     sub.add_parser("skill", help="print the Claude Code skill for mfp (SKILL.md)")
-    args = parser.parse_args(argv)
+    sub.add_parser("manifest", help="describe this tool for a host such as the cockpit, as JSON")
+    return parser
+
+
+def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen) -> int:
+    today = datetime.date.today().isoformat()
+    args = build_parser(today).parse_args(argv)
 
     if args.command == "skill":
-        print(importlib.resources.files("mfp_tool").joinpath("SKILL.md").read_text(), end="")
+        print(_skill(), end="")
+        return 0
+    if args.command == "manifest":
+        _print_json(_manifest())
         return 0
 
     try:
@@ -83,6 +112,21 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
 def _print_json(value: object) -> None:
     json.dump(value, sys.stdout, indent=1, ensure_ascii=False)
     print()
+
+
+def _skill() -> str:
+    return importlib.resources.files("mfp_tool").joinpath("SKILL.md").read_text()
+
+
+def _manifest() -> dict[str, object]:
+    return {
+        "manifest": 1,
+        "name": "mfp",
+        "version": importlib.metadata.version("mfp-tool"),
+        "description": "MyFitnessPal food diary: read a day's meals, search foods, log and delete entries.",
+        "commands": COMMANDS,
+        "skill": _skill(),
+    }
 
 
 def _meal_position(client: Client, meal: str, day: str, today: str) -> int:
