@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import stat
@@ -11,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from mfp_tool import cli
 from mfp_tool.cli import EXIT_EXPIRED, main
 from mfp_tool.client import COOKIE, Client, MfpError, SessionExpired, TokenStore, session_token_from
 
@@ -289,3 +291,37 @@ def test_requests_carry_the_sites_referer(token_file: Path) -> None:
     fake = FakeMfp({"/api/auth/session": (SESSION, []), "/api/auth/csrf": (CSRF, [])})
     Client(TokenStore(token_file), opener=fake).login()
     assert {r.get_header("Referer") for r in fake.requests} == {"https://www.myfitnesspal.com/"}
+
+
+def test_manifest_describes_every_command_without_a_login(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def no_network(req: urllib.request.Request, timeout: float) -> FakeResponse:
+        raise AssertionError("mfp manifest must not call MFP")
+
+    assert main(["--token-file", str(tmp_path / "missing"), "manifest"], opener=no_network) == 0
+    m = json.loads(capsys.readouterr().out)
+    assert m["manifest"] == 1 and m["name"] == "mfp" and m["version"]
+    assert m["skill"].startswith("---\nname: mfp\n")
+    assert {c["name"]: c["writes"] for c in m["commands"]} == {
+        "session": False,
+        "diary": False,
+        "search": False,
+        "log": True,
+        "delete": True,
+    }
+    assert all(c["usage"].startswith(f"mfp {c['name']}") and c["summary"] for c in m["commands"])
+
+
+def test_manifest_lists_every_command_but_its_own_helpers() -> None:
+    sub = next(a for a in cli.build_parser("2026-01-01")._actions if isinstance(a, argparse._SubParsersAction))
+    assert set(sub.choices) - {"skill", "manifest"} == {c["name"] for c in cli.COMMANDS}
+
+
+def test_manifest_works_from_a_source_tree(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import importlib.metadata
+
+    def missing(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert main(["manifest"]) == 0
+    assert json.loads(capsys.readouterr().out)["version"] == "unknown"
