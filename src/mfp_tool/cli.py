@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.resources
 import json
 import os
 import sys
@@ -28,7 +29,12 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
     sub.add_parser("session", help="check the login and keep the cookie fresh")
     diary = sub.add_parser("diary", help="food diary for a day, as JSON")
     diary.add_argument("date", nargs="?", default=datetime.date.today().isoformat(), help="YYYY-MM-DD (default today)")
+    sub.add_parser("skill", help="print the Claude Code skill for mfp (SKILL.md)")
     args = parser.parse_args(argv)
+
+    if args.command == "skill":
+        print(importlib.resources.files("mfp_tool").joinpath("SKILL.md").read_text(), end="")
+        return 0
 
     try:
         client = Client(TokenStore(args.token_file), opener=opener)
