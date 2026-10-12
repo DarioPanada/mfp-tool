@@ -18,7 +18,8 @@ EXIT_EXPIRED = 2
 EXIT_ERROR = 1
 
 # What `mfp manifest` tells a host such as the cockpit: every command Claude may run, and which
-# ones change the diary (a host asks before running those).
+# ones change the diary (a host asks before running those). Every command that logs in, read-only
+# ones too, rewrites the cookie file when MFP refreshes it; `writes` is about the diary only.
 COMMANDS = [
     {"name": "session", "usage": "mfp session", "summary": "check the login, refresh the cookie", "writes": False},
     {"name": "diary", "usage": "mfp diary [YYYY-MM-DD]", "summary": "food entries for a day, as JSON", "writes": False},
@@ -118,11 +119,18 @@ def _skill() -> str:
     return importlib.resources.files("mfp_tool").joinpath("SKILL.md").read_text()
 
 
+def _version() -> str:
+    try:
+        return importlib.metadata.version("mfp-tool")
+    except importlib.metadata.PackageNotFoundError:  # run from a source tree, not installed
+        return "unknown"
+
+
 def _manifest() -> dict[str, object]:
     return {
         "manifest": 1,
         "name": "mfp",
-        "version": importlib.metadata.version("mfp-tool"),
+        "version": _version(),
         "description": "MyFitnessPal food diary: read a day's meals, search foods, log and delete entries.",
         "commands": COMMANDS,
         "skill": _skill(),
