@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import urllib.error
 import urllib.parse
@@ -116,7 +117,8 @@ class Client:
         cookies = [f"{k}={v}" for k, v in self.cookies.items()]
         if session:
             cookies.insert(0, f"{COOKIE}={self.token}")
-        headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+        # Food search (/api/nutrition) answers 404 {"items":[]} to a request without a Referer.
+        headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Referer": self.base_url + "/"}
         if cookies:
             headers["Cookie"] = "; ".join(cookies)
         if self.csrf:
@@ -158,3 +160,69 @@ class Client:
         query = {"entry_date": day, "fields": "all", "types": "food_entry", "username": username}
         entries = self.request("GET", "/api/services/diary/read_diary", query)
         return [e for e in entries if not e.get("deleted")]
+
+    def meals(self, day: str) -> dict[str, int]:
+        """Meal name to `meal_position`, from the meals that have entries on `day`."""
+        return {e["meal_name"]: e["meal_position"] for e in self.diary(day)}
+
+    def search(self, text: str, max_items: int = 10, page: int = 1, country_code: str = "US") -> list[dict[str, Any]]:
+        """Foods matching `text`: id, version, description, brand and serving sizes of each."""
+        if not self.username:
+            self.login()
+        query = {
+            "query": text,
+            "max_items": str(max_items),
+            "page": str(page),
+            "offset": str((page - 1) * max_items),
+            "country_code": country_code,
+            "resource_type": "normal_food",
+        }
+        found = self.request("GET", "/api/nutrition", query) or {}
+        items = found.get("items", []) if isinstance(found, dict) else found
+        return [_food_summary(i.get("item", i)) for i in items]
+
+    def log(
+        self,
+        day: str,
+        food_id: str,
+        food_version: str,
+        meal_position: int,
+        servings: float,
+        serving_size: dict[str, Any],
+    ) -> Any:
+        """Adds a food entry and returns MFP's answer: a list holding the new entry, with its id."""
+        if not self.username:
+            self.login()
+        entry = {
+            "type": "food_entry",
+            "date": day,
+            "food": {"id": food_id, "version": food_version},
+            "servings": servings,
+            "meal_position": meal_position,
+            "serving_size": {k: serving_size[k] for k in ("nutrition_multiplier", "unit", "value")},
+        }
+        return self.request("POST", "/api/services/diary", body={"items": [entry]})
+
+    def delete(self, entry_id: str) -> None:
+        """Deletes a diary entry."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", entry_id):
+            raise ValueError(f"not an entry id: {entry_id!r}")
+        if not self.username:
+            self.login()
+        self.request("DELETE", f"/api/services/diary/{entry_id}")
+
+
+def _food_summary(food: dict[str, Any]) -> dict[str, Any]:
+    energy = ((food.get("nutritional_contents") or {}).get("energy") or {}).get("value")
+    sizes = [
+        {k: s.get(k) for k in ("value", "unit", "nutrition_multiplier")} | {"index": n}
+        for n, s in enumerate(food.get("serving_sizes") or [])
+    ]
+    return {
+        "id": food.get("id"),
+        "version": food.get("version"),
+        "description": food.get("description"),
+        "brand": food.get("brand_name"),
+        "kcal": energy,  # for the food's base nutrition, i.e. a nutrition_multiplier of 1
+        "serving_sizes": sizes,
+    }

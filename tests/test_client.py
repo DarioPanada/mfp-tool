@@ -173,3 +173,119 @@ def test_skill_prints_without_a_login(tmp_path: Path, capsys: pytest.CaptureFixt
     assert main(["--token-file", str(tmp_path / "missing"), "skill"], opener=no_network) == 0
     out = capsys.readouterr().out
     assert out.startswith("---\nname: mfp\n") and "session-token" in out
+
+
+def logged_in(**routes: tuple[Any, list[str]]) -> dict[str, tuple[Any, list[str]]]:
+    return {"/api/auth/session": (SESSION, []), "/api/auth/csrf": (CSRF, [])} | {
+        path: route for path, route in routes.items()
+    }
+
+
+def sent(req: urllib.request.Request) -> Any:
+    assert isinstance(req.data, bytes)
+    return json.loads(req.data)
+
+
+FOOD = {
+    "id": "123",
+    "version": "456",
+    "description": "Water",
+    "brand_name": None,
+    "nutritional_contents": {"energy": {"unit": "calories", "value": 0}},
+    "serving_sizes": [{"id": "9", "value": 1, "unit": "cup", "nutrition_multiplier": 2.4}],
+}
+
+
+def test_search_sends_the_query_and_summarizes_each_food(token_file: Path) -> None:
+    fake = FakeMfp(logged_in(**{"/api/nutrition": ({"items": [{"item": FOOD, "type": "food"}]}, [])}))
+    found = Client(TokenStore(token_file), opener=fake).search("water", max_items=5, page=2, country_code="GB")
+    assert found == [
+        {
+            "id": "123",
+            "version": "456",
+            "description": "Water",
+            "brand": None,
+            "kcal": 0,
+            "serving_sizes": [{"value": 1, "unit": "cup", "nutrition_multiplier": 2.4, "index": 0}],
+        }
+    ]
+    url = fake.requests[-1].full_url
+    for param in ("query=water", "max_items=5", "page=2", "offset=5", "country_code=GB", "resource_type=normal_food"):
+        assert param in url
+
+
+def test_log_posts_one_food_entry_with_csrf(token_file: Path) -> None:
+    fake = FakeMfp(logged_in(**{"/api/services/diary": ([{"id": "e1"}], [])}))
+    size = {"value": 1, "unit": "cup", "nutrition_multiplier": 2.4, "id": "9"}
+    client = Client(TokenStore(token_file), opener=fake)
+    assert client.log("2026-10-12", "123", "456", 2, 0.5, size) == [{"id": "e1"}]
+    req = fake.requests[-1]
+    assert req.get_method() == "POST"
+    assert req.get_header("X-csrf-token") == "csrf-value"
+    assert sent(req) == {
+        "items": [
+            {
+                "type": "food_entry",
+                "date": "2026-10-12",
+                "food": {"id": "123", "version": "456"},
+                "servings": 0.5,
+                "meal_position": 2,
+                "serving_size": {"nutrition_multiplier": 2.4, "unit": "cup", "value": 1},
+            }
+        ]
+    }
+
+
+def cli_log(token_file: Path, fake: FakeMfp, meal: str) -> int:
+    args = ["--token-file", str(token_file), "log", "123", "456", "--meal", meal, "--servings", "1"]
+    return main([*args, "--value", "1", "--unit", "cup", "--multiplier", "2.4", "--date", "2026-10-12"], opener=fake)
+
+
+def test_cli_log_takes_the_meal_position_from_the_diary(token_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    diary = [
+        {"id": "a", "meal_name": "Breakfast", "meal_position": 0},
+        {"id": "b", "meal_name": "Snack 2", "meal_position": 3},
+    ]
+    fake = FakeMfp(
+        logged_in(**{"/api/services/diary/read_diary": (diary, []), "/api/services/diary": ([{"id": "e1"}], [])})
+    )
+    assert cli_log(token_file, fake, "snack 2") == 0
+    assert sent(fake.requests[-1])["items"][0]["meal_position"] == 3
+    out = capsys.readouterr().out
+    assert json.loads(out) == [{"id": "e1"}] and "old-token" not in out
+
+
+def test_cli_log_refuses_an_unknown_meal_without_posting(token_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    diary = [{"id": "a", "meal_name": "Breakfast", "meal_position": 0}]
+    fake = FakeMfp(logged_in(**{"/api/services/diary/read_diary": (diary, [])}))
+    assert cli_log(token_file, fake, "Elevenses") == 1
+    assert all(r.get_method() == "GET" for r in fake.requests)
+    assert "Breakfast=0" in capsys.readouterr().err
+
+
+def test_cli_log_takes_a_numeric_meal_position_as_given(token_file: Path) -> None:
+    fake = FakeMfp(logged_in(**{"/api/services/diary": ([{"id": "e1"}], [])}))
+    assert cli_log(token_file, fake, "4") == 0
+    assert sent(fake.requests[-1])["items"][0]["meal_position"] == 4
+
+
+def test_delete_sends_delete_for_the_entry(token_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeMfp(logged_in(**{"/api/services/diary/abc123": (b"", [])}))
+    assert main(["--token-file", str(token_file), "delete", "abc123"], opener=fake) == 0
+    assert fake.requests[-1].get_method() == "DELETE"
+    assert fake.requests[-1].get_header("X-csrf-token") == "csrf-value"
+    assert capsys.readouterr().out == "deleted abc123\n"
+
+
+@pytest.mark.parametrize("entry_id", ["../read_diary", "a/b", "", "1?x=2"])
+def test_delete_rejects_anything_but_an_id_before_calling_mfp(token_file: Path, entry_id: str) -> None:
+    fake = FakeMfp(logged_in())
+    with pytest.raises(ValueError):
+        Client(TokenStore(token_file), opener=fake).delete(entry_id)
+    assert fake.requests == []
+
+
+def test_requests_carry_the_sites_referer(token_file: Path) -> None:
+    fake = FakeMfp({"/api/auth/session": (SESSION, []), "/api/auth/csrf": (CSRF, [])})
+    Client(TokenStore(token_file), opener=fake).login()
+    assert {r.get_header("Referer") for r in fake.requests} == {"https://www.myfitnesspal.com/"}
