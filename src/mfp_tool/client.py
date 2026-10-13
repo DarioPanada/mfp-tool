@@ -204,12 +204,103 @@ class Client:
         return self.request("POST", "/api/services/diary", body={"items": [entry]})
 
     def delete(self, entry_id: str) -> None:
-        """Deletes a diary entry."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", entry_id):
-            raise ValueError(f"not an entry id: {entry_id!r}")
+        """Deletes a diary entry (food, quick add or exercise)."""
+        _check_id(entry_id, "entry")
         if not self.username:
             self.login()
         self.request("DELETE", f"/api/services/diary/{entry_id}")
+
+    def meal_names(self) -> list[str]:
+        """The diary's meal names, in order: a meal's index is its `meal_position`."""
+        if not self.username:
+            self.login()
+        return list((self.request("GET", "/api/services/account/diary_settings") or {}).get("meal_names") or [])
+
+    def quick_add(self, day: str, meal_name: str, nutrition: dict[str, float]) -> Any:
+        """Adds calories (and any of carbohydrates, fat, protein in grams) to a meal without a food."""
+        if not self.username:
+            self.login()
+        contents: dict[str, Any] = {k: v for k, v in nutrition.items() if k != "energy"}
+        contents["energy"] = {"value": nutrition["energy"], "unit": "calories"}
+        entry = {"type": "quick_add", "date": day, "meal_name": meal_name, "nutritional_contents": contents}
+        return self.request("POST", "/api/services/diary", body={"items": [entry]})
+
+    def exercises(self, day: str) -> list[dict[str, Any]]:
+        """Exercise entries for `day` (YYYY-MM-DD), without deleted ones."""
+        username = self.username or self.login()
+        query = {"entry_date": day, "fields": "all", "types": "exercise_entry", "username": username}
+        entries = self.request("GET", "/api/services/diary/read_diary", query)
+        return [e for e in entries if e.get("type") == "exercise_entry" and not e.get("deleted")]
+
+    def search_exercises(self, text: str) -> list[dict[str, Any]]:
+        """Exercises matching `text`: id and description of each."""
+        if not self.username:
+            self.login()
+        found = self.request("GET", "/api/services/exercises/search", {"search": text, "locale": "en"}) or {}
+        return list(found.get("exercises") or [])
+
+    def log_exercise(self, day: str, exercise_id: str, seconds: int, kcal: float, start_time: str) -> Any:
+        """Adds an exercise entry; `start_time` is UTC, as YYYY-MM-DDTHH:MM:SSZ."""
+        _check_id(exercise_id, "exercise")
+        if not self.username:
+            self.login()
+        exercise = self.request("GET", f"/api/services/exercises/{exercise_id}")
+        entry = {
+            "type": "exercise_entry",
+            "date": day,
+            "exercise": {"id": exercise_id, "version": exercise["version"]},
+            "duration": seconds,
+            "energy": {"unit": "calories", "value": kcal},
+            "start_time": start_time,
+        }
+        return self.request("POST", "/api/services/diary", body={"items": [entry]})
+
+    def saved_meals(self) -> list[dict[str, Any]]:
+        """Saved meals: id, description and each food's name and nutrition (MFP gives no food ids)."""
+        if not self.username:
+            self.login()
+        return list(self.request("GET", "/api/services/users/meals/mine", {"limit": "100", "search": ""}) or [])
+
+    def my_foods(self, text: str = "") -> list[dict[str, Any]]:
+        """Foods this account created (recipes saved as foods among them)."""
+        if not self.username:
+            self.login()
+        found = self.request("GET", "/api/services/users/foods/mine", {"search": text}) or []
+        items = found.get("items", []) if isinstance(found, dict) else found
+        return [_food_summary(i.get("item", i)) for i in items]
+
+    def create_food(
+        self, description: str, brand: str, serving: dict[str, Any], nutrition: dict[str, float], country_code: str
+    ) -> Any:
+        """Creates a private food (energy in kcal, nutrients in grams, sodium in mg) and returns MFP's answer."""
+        if not self.username:
+            self.login()
+        user = self.request("GET", "/api/services/users")
+        contents: dict[str, Any] = {k: v for k, v in nutrition.items() if k != "energy"}
+        contents["energy"] = {"unit": "calories", "value": nutrition["energy"]}
+        item = {
+            "user_id": user["id"],
+            "brand_name": brand,
+            "description": description,
+            "nutritional_contents": contents,
+            "serving_sizes": [{"value": serving["value"], "unit": serving["unit"], "nutrition_multiplier": 1}],
+            "public": False,
+            "country_code": country_code,
+        }
+        return self.request("POST", "/api/services/foods", body={"item": item})
+
+    def delete_food(self, food_id: str) -> None:
+        """Deletes a food this account created."""
+        _check_id(food_id, "food")
+        if not self.username:
+            self.login()
+        self.request("DELETE", f"/api/services/foods/{food_id}")
+
+
+def _check_id(value: str, what: str) -> None:
+    """Ids go into URL paths: letters, digits, `_` and `-` only."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise ValueError(f"not an {what} id: {value!r}" if what[0] in "aeiou" else f"not a {what} id: {value!r}")
 
 
 def _food_summary(food: dict[str, Any]) -> dict[str, Any]:

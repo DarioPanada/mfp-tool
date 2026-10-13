@@ -307,6 +307,14 @@ def test_manifest_describes_every_command_without_a_login(tmp_path: Path, capsys
         "search": False,
         "log": True,
         "delete": True,
+        "quick-add": True,
+        "exercises": False,
+        "exercise-search": False,
+        "exercise-log": True,
+        "meals": False,
+        "foods": False,
+        "food-create": True,
+        "food-delete": True,
     }
     assert all(c["usage"].startswith(f"mfp {c['name']}") and c["summary"] for c in m["commands"])
 
@@ -325,3 +333,134 @@ def test_manifest_works_from_a_source_tree(monkeypatch: pytest.MonkeyPatch, caps
     monkeypatch.setattr(importlib.metadata, "version", missing)
     assert main(["manifest"]) == 0
     assert json.loads(capsys.readouterr().out)["version"] == "unknown"
+
+
+SETTINGS = {"meal_names": ["Breakfast", "Snack 1", "Lunch", "Snack 2", "Dinner"]}
+
+
+def run(token_file: Path, fake: FakeMfp, *args: str) -> int:
+    return main(["--token-file", str(token_file), *args], opener=fake)
+
+
+@pytest.mark.parametrize("meal", ["lunch", "2"])
+def test_quick_add_posts_calories_and_macros_to_the_named_meal(token_file: Path, meal: str) -> None:
+    fake = FakeMfp(
+        logged_in(
+            **{"/api/services/account/diary_settings": (SETTINGS, []), "/api/services/diary": ([{"id": "q1"}], [])}
+        )
+    )
+    assert (
+        run(token_file, fake, "quick-add", "--kcal", "450", "--meal", meal, "--protein", "30", "--date", "2026-10-12")
+        == 0
+    )
+    assert sent(fake.requests[-1]) == {
+        "items": [
+            {
+                "type": "quick_add",
+                "date": "2026-10-12",
+                "meal_name": "Lunch",
+                "nutritional_contents": {"protein": 30.0, "energy": {"value": 450.0, "unit": "calories"}},
+            }
+        ]
+    }
+
+
+def test_quick_add_refuses_an_unknown_meal_without_posting(
+    token_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeMfp(logged_in(**{"/api/services/account/diary_settings": (SETTINGS, [])}))
+    assert run(token_file, fake, "quick-add", "--kcal", "100", "--meal", "Elevenses") == 1
+    assert all(r.get_method() == "GET" for r in fake.requests)
+    assert "Dinner=4" in capsys.readouterr().err
+
+
+def test_exercise_log_looks_up_the_version_and_sends_seconds_and_utc_start(token_file: Path) -> None:
+    exercise = {"id": "134", "version": "77", "description": "Running"}
+    fake = FakeMfp(
+        logged_in(**{"/api/services/exercises/134": (exercise, []), "/api/services/diary": ([{"id": "x1"}], [])})
+    )
+    client = Client(TokenStore(token_file), opener=fake)
+    assert client.log_exercise("2026-10-12", "134", 2700, 400, "2026-10-12T07:30:00Z") == [{"id": "x1"}]
+    assert sent(fake.requests[-1]) == {
+        "items": [
+            {
+                "type": "exercise_entry",
+                "date": "2026-10-12",
+                "exercise": {"id": "134", "version": "77"},
+                "duration": 2700,
+                "energy": {"unit": "calories", "value": 400},
+                "start_time": "2026-10-12T07:30:00Z",
+            }
+        ]
+    }
+
+
+def test_cli_exercise_log_converts_minutes_and_local_time(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TZ", "Europe/London")
+    import time
+
+    time.tzset()
+    exercise = {"id": "134", "version": "77"}
+    fake = FakeMfp(
+        logged_in(**{"/api/services/exercises/134": (exercise, []), "/api/services/diary": ([{"id": "x1"}], [])})
+    )
+    args = ["exercise-log", "134", "--minutes", "45", "--kcal", "400", "--date", "2026-10-12", "--time", "08:30"]
+    assert run(token_file, fake, *args) == 0
+    entry = sent(fake.requests[-1])["items"][0]
+    assert (entry["duration"], entry["start_time"]) == (2700, "2026-10-12T07:30:00Z")
+    monkeypatch.delenv("TZ")
+    time.tzset()
+
+
+def test_exercises_keeps_only_live_exercise_entries(token_file: Path) -> None:
+    entries = [
+        {"id": "a", "type": "exercise_entry"},
+        {"id": "b", "type": "exercise_entry", "deleted": True},
+        {"id": "c", "type": "steps_aggregate"},
+    ]
+    fake = FakeMfp(logged_in(**{"/api/services/diary/read_diary": (entries, [])}))
+    assert [e["id"] for e in Client(TokenStore(token_file), opener=fake).exercises("2026-10-12")] == ["a"]
+    assert "types=exercise_entry" in fake.requests[-1].full_url
+
+
+def test_exercise_search_returns_the_exercises(token_file: Path) -> None:
+    found = {"exercises": [{"id": "134", "description": "Running"}]}
+    fake = FakeMfp(logged_in(**{"/api/services/exercises/search": (found, [])}))
+    assert Client(TokenStore(token_file), opener=fake).search_exercises("run") == found["exercises"]
+    assert "search=run" in fake.requests[-1].full_url
+
+
+def test_food_create_posts_a_private_food_for_the_user(token_file: Path) -> None:
+    fake = FakeMfp(
+        logged_in(
+            **{
+                "/api/services/users": ({"id": "u1", "username": "someone"}, []),
+                "/api/services/foods": ([{"id": "f1", "version": "v1"}], []),
+            }
+        )
+    )
+    args = ["food-create", "Chili (per serving)", "--kcal", "520", "--value", "1", "--unit", "serving"]
+    assert run(token_file, fake, *args, "--brand", "Homemade", "--carbs", "40", "--sodium", "800") == 0
+    assert sent(fake.requests[-1]) == {
+        "item": {
+            "user_id": "u1",
+            "brand_name": "Homemade",
+            "description": "Chili (per serving)",
+            "nutritional_contents": {
+                "carbohydrates": 40.0,
+                "sodium": 800.0,
+                "energy": {"unit": "calories", "value": 520.0},
+            },
+            "serving_sizes": [{"value": 1.0, "unit": "serving", "nutrition_multiplier": 1}],
+            "public": False,
+            "country_code": "US",
+        }
+    }
+
+
+@pytest.mark.parametrize("food_id", ["../users", "a/b", ""])
+def test_food_delete_rejects_anything_but_an_id_before_calling_mfp(token_file: Path, food_id: str) -> None:
+    fake = FakeMfp(logged_in())
+    with pytest.raises(ValueError):
+        Client(TokenStore(token_file), opener=fake).delete_food(food_id)
+    assert fake.requests == []

@@ -36,7 +36,49 @@ COMMANDS = [
         "writes": True,
     },
     {"name": "delete", "usage": "mfp delete <entry id>", "summary": "delete a diary entry", "writes": True},
+    {
+        "name": "quick-add",
+        "usage": "mfp quick-add --kcal N --meal M [--carbs G] [--fat G] [--protein G] [--date D]",
+        "summary": "add calories (and macros) to a meal without a food",
+        "writes": True,
+    },
+    {
+        "name": "exercises",
+        "usage": "mfp exercises [YYYY-MM-DD]",
+        "summary": "exercise entries for a day, as JSON",
+        "writes": False,
+    },
+    {
+        "name": "exercise-search",
+        "usage": "mfp exercise-search <text>",
+        "summary": "search MFP's exercises, as JSON",
+        "writes": False,
+    },
+    {
+        "name": "exercise-log",
+        "usage": "mfp exercise-log <exercise id> --minutes N --kcal K [--date D] [--time HH:MM]",
+        "summary": "add an exercise entry (calories burned) to the diary",
+        "writes": True,
+    },
+    {"name": "meals", "usage": "mfp meals", "summary": "saved meals and their foods, as JSON", "writes": False},
+    {"name": "foods", "usage": "mfp foods [text]", "summary": "foods this account created, as JSON", "writes": False},
+    {
+        "name": "food-create",
+        "usage": "mfp food-create <description> --kcal K --value V --unit U [--brand B] [--carbs G] [--fat G] "
+        "[--protein G] [--sugar G] [--fiber G] [--sodium MG] [--country CC]",
+        "summary": "create a private food, such as a recipe per serving",
+        "writes": True,
+    },
+    {
+        "name": "food-delete",
+        "usage": "mfp food-delete <food id>",
+        "summary": "delete a food this account created",
+        "writes": True,
+    },
 ]
+
+NUTRIENTS = {"carbs": "carbohydrates", "fat": "fat", "protein": "protein"}
+MORE_NUTRIENTS = {"sugar": "sugar", "fiber": "fiber", "sodium": "sodium"}
 
 
 def build_parser(today: str) -> argparse.ArgumentParser:
@@ -67,6 +109,34 @@ def build_parser(today: str) -> argparse.ArgumentParser:
     log.add_argument("--date", default=today, help="YYYY-MM-DD (default today)")
     delete = sub.add_parser("delete", help="delete a diary entry by its id")
     delete.add_argument("entry_id")
+    quick = sub.add_parser("quick-add", help="add calories to a meal without a food; prints the new entry")
+    quick.add_argument("--kcal", type=float, required=True)
+    quick.add_argument("--meal", required=True, help="meal name (Breakfast, Lunch, ...) or position")
+    _nutrient_args(quick, NUTRIENTS)
+    quick.add_argument("--date", default=today, help="YYYY-MM-DD (default today)")
+    exercises = sub.add_parser("exercises", help="exercise entries for a day, as JSON")
+    exercises.add_argument("date", nargs="?", default=today, help="YYYY-MM-DD (default today)")
+    exercise_search = sub.add_parser("exercise-search", help="search MFP's exercises, as JSON")
+    exercise_search.add_argument("text")
+    exercise_log = sub.add_parser("exercise-log", help="add an exercise entry; prints the new entry")
+    exercise_log.add_argument("exercise_id")
+    exercise_log.add_argument("--minutes", type=float, required=True)
+    exercise_log.add_argument("--kcal", type=float, required=True, help="calories burned")
+    exercise_log.add_argument("--date", default=today, help="YYYY-MM-DD (default today)")
+    exercise_log.add_argument("--time", help="local start time HH:MM (default now, or 12:00 on another day)")
+    sub.add_parser("meals", help="saved meals and their foods, as JSON")
+    foods = sub.add_parser("foods", help="foods this account created, as JSON")
+    foods.add_argument("text", nargs="?", default="")
+    food_create = sub.add_parser("food-create", help="create a private food; prints it with its id and version")
+    food_create.add_argument("description")
+    food_create.add_argument("--kcal", type=float, required=True, help="calories per serving")
+    food_create.add_argument("--value", type=float, required=True, help="serving size value, such as 1")
+    food_create.add_argument("--unit", required=True, help="serving size unit, such as serving or g")
+    food_create.add_argument("--brand", default="", help="brand, or a label such as Homemade")
+    _nutrient_args(food_create, NUTRIENTS | MORE_NUTRIENTS)
+    food_create.add_argument("--country", default="US", help="country code (default %(default)s)")
+    food_delete = sub.add_parser("food-delete", help="delete a food this account created")
+    food_delete.add_argument("food_id")
     sub.add_parser("skill", help="print the Claude Code skill for mfp (SKILL.md)")
     sub.add_parser("manifest", help="describe this tool for a host such as the cockpit, as JSON")
     return parser
@@ -101,6 +171,30 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
         elif args.command == "delete":
             client.delete(args.entry_id)
             print(f"deleted {args.entry_id}")
+        elif args.command == "quick-add":
+            datetime.date.fromisoformat(args.date)
+            meal = _meal_name(client.meal_names(), args.meal)
+            _print_json(client.quick_add(args.date, meal, _nutrition(args, NUTRIENTS)))
+        elif args.command == "exercises":
+            datetime.date.fromisoformat(args.date)
+            _print_json(client.exercises(args.date))
+        elif args.command == "exercise-search":
+            _print_json(client.search_exercises(args.text))
+        elif args.command == "exercise-log":
+            start = _start_time(args.date, args.time, today)
+            seconds = round(args.minutes * 60)
+            _print_json(client.log_exercise(args.date, args.exercise_id, seconds, args.kcal, start))
+        elif args.command == "meals":
+            _print_json(client.saved_meals())
+        elif args.command == "foods":
+            _print_json(client.my_foods(args.text))
+        elif args.command == "food-create":
+            serving = {"value": args.value, "unit": args.unit}
+            nutrition = _nutrition(args, NUTRIENTS | MORE_NUTRIENTS)
+            _print_json(client.create_food(args.description, args.brand, serving, nutrition, args.country))
+        elif args.command == "food-delete":
+            client.delete_food(args.food_id)
+            print(f"deleted food {args.food_id}")
     except SessionExpired as e:
         print(f"MFP login expired ({e}): save a fresh session-token cookie in {args.token_file}", file=sys.stderr)
         return EXIT_EXPIRED
@@ -131,7 +225,8 @@ def _manifest() -> dict[str, object]:
         "manifest": 1,
         "name": "mfp",
         "version": _version(),
-        "description": "MyFitnessPal food diary: read a day's meals, search foods, log and delete entries.",
+        "description": "MyFitnessPal diary: read and log food, quick adds and exercise; search foods and exercises; "
+        "create foods such as recipes.",
         "commands": COMMANDS,
         "skill": _skill(),
     }
@@ -148,6 +243,40 @@ def _meal_position(client: Client, meal: str, day: str, today: str) -> int:
     listed = ", ".join(f"{n}={p}" for n, p in sorted(known.items(), key=lambda kv: kv[1])) or "none"
     days = today if day == today else f"{today} or {day}"
     raise ValueError(f"no meal {meal!r} in the diary of {days} (seen: {listed}); give its position")
+
+
+def _nutrient_args(parser: argparse.ArgumentParser, names: dict[str, str]) -> None:
+    for flag in names:
+        parser.add_argument(f"--{flag}", type=float, help="mg" if flag == "sodium" else "grams")
+
+
+def _nutrition(args: argparse.Namespace, names: dict[str, str]) -> dict[str, float]:
+    """`energy` in kcal plus each nutrient given on the command line, under MFP's names."""
+    given = {mfp: getattr(args, flag) for flag, mfp in names.items() if getattr(args, flag) is not None}
+    return {"energy": args.kcal} | given
+
+
+def _meal_name(names: list[str], meal: str) -> str:
+    """The diary's own name for a meal given by name (any case) or position."""
+    if meal.isdigit() and int(meal) < len(names):
+        return names[int(meal)]
+    for name in names:
+        if name.casefold() == meal.casefold():
+            return name
+    listed = ", ".join(f"{n}={p}" for p, n in enumerate(names)) or "none"
+    raise ValueError(f"no meal {meal!r} in the diary (meals: {listed})")
+
+
+def _start_time(day: str, time: str | None, today: str) -> str:
+    """A local date and HH:MM as UTC; no time means now today, or 12:00 on another day."""
+    date = datetime.date.fromisoformat(day)
+    if time is None:
+        local = (
+            datetime.datetime.now().astimezone() if day == today else datetime.datetime.combine(date, datetime.time(12))
+        )
+    else:
+        local = datetime.datetime.combine(date, datetime.time.fromisoformat(time))
+    return local.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def main_exit() -> None:
