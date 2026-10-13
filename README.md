@@ -55,7 +55,15 @@ mfp session              # check the login, refresh the cookie
 mfp diary [YYYY-MM-DD]   # food entries for a day (default today), as JSON
 mfp search <text>        # foods: id, version, description, brand, kcal, serving sizes
 mfp log <food id> <food version> --meal Lunch --servings 1 --value 100 --unit g --multiplier 1
-mfp delete <entry id>    # remove a diary entry
+mfp delete <entry id>    # remove a diary entry (food, quick add or exercise)
+mfp quick-add --kcal 450 --meal Lunch [--carbs G --fat G --protein G]   # calories without a food
+mfp exercises [YYYY-MM-DD]              # exercise entries for a day
+mfp exercise-search <text>              # exercises: id, description
+mfp exercise-log <exercise id> --minutes 45 --kcal 400 [--time HH:MM]   # calories burned
+mfp meals                               # saved meals with their foods' nutrition
+mfp foods [text]                        # foods you created
+mfp food-create "Chili (homemade)" --value 1 --unit serving --kcal 520 [--carbs G ...]  # e.g. a recipe
+mfp food-delete <food id>
 mfp skill                # the Claude Code skill (SKILL.md), see above
 mfp manifest             # this tool described for a host such as the cockpit, as JSON
 ```
