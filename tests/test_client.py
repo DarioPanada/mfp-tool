@@ -335,7 +335,17 @@ def test_manifest_works_from_a_source_tree(monkeypatch: pytest.MonkeyPatch, caps
     assert json.loads(capsys.readouterr().out)["version"] == "unknown"
 
 
-SETTINGS = {"meal_names": ["Breakfast", "Snack 1", "Lunch", "Snack 2", "Dinner"]}
+# as MFP sends it, unnamed slot included
+SETTINGS = {
+    "meal_names": [
+        {"position": 0, "description": "Breakfast"},
+        {"position": 1, "description": "Snack 1"},
+        {"position": 2, "description": "Lunch"},
+        {"position": 3, "description": "Snack 2"},
+        {"position": 4, "description": "Dinner"},
+        {"position": 5, "description": None},
+    ]
+}
 
 
 def run(token_file: Path, fake: FakeMfp, *args: str) -> int:

@@ -256,14 +256,12 @@ def _nutrition(args: argparse.Namespace, names: dict[str, str]) -> dict[str, flo
     return {"energy": args.kcal} | given
 
 
-def _meal_name(names: list[str], meal: str) -> str:
+def _meal_name(names: dict[str, int], meal: str) -> str:
     """The diary's own name for a meal given by name (any case) or position."""
-    if meal.isdigit() and int(meal) < len(names):
-        return names[int(meal)]
-    for name in names:
-        if name.casefold() == meal.casefold():
+    for name, position in names.items():
+        if name.casefold() == meal.casefold() or (meal.isdigit() and int(meal) == position):
             return name
-    listed = ", ".join(f"{n}={p}" for p, n in enumerate(names)) or "none"
+    listed = ", ".join(f"{n}={p}" for n, p in sorted(names.items(), key=lambda kv: kv[1])) or "none"
     raise ValueError(f"no meal {meal!r} in the diary (meals: {listed})")
 
 

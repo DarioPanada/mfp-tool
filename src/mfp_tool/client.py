@@ -210,11 +210,12 @@ class Client:
             self.login()
         self.request("DELETE", f"/api/services/diary/{entry_id}")
 
-    def meal_names(self) -> list[str]:
-        """The diary's meal names, in order: a meal's index is its `meal_position`."""
+    def meal_names(self) -> dict[str, int]:
+        """The diary's meals from its settings: name to `meal_position` (unnamed slots left out)."""
         if not self.username:
             self.login()
-        return list((self.request("GET", "/api/services/account/diary_settings") or {}).get("meal_names") or [])
+        meals = (self.request("GET", "/api/services/account/diary_settings") or {}).get("meal_names") or []
+        return {m["description"]: m["position"] for m in meals if m.get("description")}
 
     def quick_add(self, day: str, meal_name: str, nutrition: dict[str, float]) -> Any:
         """Adds calories (and any of carbohydrates, fat, protein in grams) to a meal without a food."""
