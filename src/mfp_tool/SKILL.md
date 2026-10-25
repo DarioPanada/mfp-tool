@@ -1,6 +1,6 @@
 ---
 name: mfp
-description: Read and log Dario's MyFitnessPal diary with the `mfp` command. Use when he asks what he ate or burned, about calories, macros (carbs, fat, protein) or a day's meals, asks to log or remove a food, a quick add, exercise or a recipe, or mentions MyFitnessPal or MFP.
+description: Read and log Dario's MyFitnessPal diary with the `mfp` command. Use when he asks what he ate or burned, about calories, macros (carbs, fat, protein) or a day's meals, asks to log or remove a food, a quick add, exercise, a recipe or a weigh-in, asks about his weight, or mentions MyFitnessPal or MFP.
 ---
 
 # MyFitnessPal (`mfp`)
@@ -25,6 +25,9 @@ mfp foods [text]                       # foods Dario created (his recipes among 
 mfp food-create <description> --kcal K --value V --unit U [--brand B] [--carbs G] [--fat G] \
     [--protein G] [--sugar G] [--fiber G] [--sodium MG]   # prints the new food with id and version
 mfp food-delete <food id>
+mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
+mfp weight-log <weight> --unit kg|lb [--date YYYY-MM-DD]       # save a weigh-in
+mfp weight-delete <measurement id>
 ```
 
 Exit status: 0 ok, 1 error (message on stderr), **2 the login has expired**.
@@ -86,9 +89,18 @@ MFP's own recipe box isn't reachable, so a recipe is saved as one of Dario's foo
 
 Check `mfp foods` first: the recipe may already exist. Ask before `mfp food-delete`.
 
+## Weight
+
+`mfp weights` lists weigh-ins, newest first (30 unless `--limit`): each has an `id`, a `date`, a
+`value` and its `unit`. For a trend, ask for a date range and summarise it (first, last, change)
+rather than printing every entry.
+
+To save one, use the number and unit Dario gives; if he gives no unit, ask. Confirm the weight, unit
+and date, then `mfp weight-log`. Ask before `mfp weight-delete` too, naming the date and weight.
+
 ## Rules
 
 - **Never read, print, copy or log `~/.config/mfp/session-token`** or any cookie value, not even partly, and not while debugging. Only `mfp` touches it.
 - Exit status 2 means the session has expired. Don't try to log in. Ask Dario to save a fresh cookie, following "The session cookie" in the mfp-tool README.
-- Only change the diary or his foods with `mfp log`, `quick-add`, `exercise-log`, `food-create`, `delete` and `food-delete`, and only after Dario confirms. Don't call MFP's API another way to add or change entries.
-- Diary data is personal. Never commit it to a repository, including mfp-tool, which is public.
+- Only change the diary, his foods or his weigh-ins with `mfp log`, `quick-add`, `exercise-log`, `food-create`, `delete`, `food-delete`, `weight-log` and `weight-delete`, and only after Dario confirms. Don't call MFP's API another way to add or change entries.
+- Diary and weight data are personal. Never commit it to a repository, including mfp-tool, which is public.

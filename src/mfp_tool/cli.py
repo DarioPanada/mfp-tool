@@ -75,7 +75,27 @@ COMMANDS = [
         "summary": "delete a food this account created",
         "writes": True,
     },
+    {
+        "name": "weights",
+        "usage": "mfp weights [--from D] [--to D] [--limit N]",
+        "summary": "weigh-ins, newest first, as JSON",
+        "writes": False,
+    },
+    {
+        "name": "weight-log",
+        "usage": "mfp weight-log <weight> --unit kg|lb [--date D]",
+        "summary": "save a weigh-in",
+        "writes": True,
+    },
+    {
+        "name": "weight-delete",
+        "usage": "mfp weight-delete <measurement id>",
+        "summary": "delete a weigh-in",
+        "writes": True,
+    },
 ]
+
+WEIGHT_UNITS = {"kg": "kilograms", "lb": "pounds"}
 
 NUTRIENTS = {"carbs": "carbohydrates", "fat": "fat", "protein": "protein"}
 MORE_NUTRIENTS = {"sugar": "sugar", "fiber": "fiber", "sodium": "sodium"}
@@ -137,6 +157,16 @@ def build_parser(today: str) -> argparse.ArgumentParser:
     food_create.add_argument("--country", default="US", help="country code (default %(default)s)")
     food_delete = sub.add_parser("food-delete", help="delete a food this account created")
     food_delete.add_argument("food_id")
+    weights = sub.add_parser("weights", help="weigh-ins, newest first, as JSON")
+    weights.add_argument("--from", dest="since", help="YYYY-MM-DD")
+    weights.add_argument("--to", dest="until", help="YYYY-MM-DD")
+    weights.add_argument("--limit", type=int, default=30, help="at most this many (default %(default)s)")
+    weight_log = sub.add_parser("weight-log", help="save a weigh-in; prints MFP's answer")
+    weight_log.add_argument("weight", type=float)
+    weight_log.add_argument("--unit", required=True, choices=WEIGHT_UNITS)
+    weight_log.add_argument("--date", default=today, help="YYYY-MM-DD (default today)")
+    weight_delete = sub.add_parser("weight-delete", help="delete a weigh-in by its id")
+    weight_delete.add_argument("measurement_id")
     sub.add_parser("skill", help="print the Claude Code skill for mfp (SKILL.md)")
     sub.add_parser("manifest", help="describe this tool for a host such as the cockpit, as JSON")
     return parser
@@ -195,6 +225,17 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
         elif args.command == "food-delete":
             client.delete_food(args.food_id)
             print(f"deleted food {args.food_id}")
+        elif args.command == "weights":
+            for day in (args.since, args.until):
+                if day:
+                    datetime.date.fromisoformat(day)
+            _print_json(client.weights(args.since, args.until, args.limit))
+        elif args.command == "weight-log":
+            datetime.date.fromisoformat(args.date)
+            _print_json(client.log_weight(args.date, args.weight, WEIGHT_UNITS[args.unit]))
+        elif args.command == "weight-delete":
+            client.delete_weight(args.measurement_id)
+            print(f"deleted weigh-in {args.measurement_id}")
     except SessionExpired as e:
         print(f"MFP login expired ({e}): save a fresh session-token cookie in {args.token_file}", file=sys.stderr)
         return EXIT_EXPIRED
@@ -225,8 +266,8 @@ def _manifest() -> dict[str, object]:
         "manifest": 1,
         "name": "mfp",
         "version": _version(),
-        "description": "MyFitnessPal diary: read and log food, quick adds and exercise; search foods and exercises; "
-        "create foods such as recipes.",
+        "description": "MyFitnessPal diary: read and log food, quick adds, exercise and weigh-ins; search foods and "
+        "exercises; create foods such as recipes.",
         "commands": COMMANDS,
         "skill": _skill(),
     }

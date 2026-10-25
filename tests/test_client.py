@@ -315,6 +315,9 @@ def test_manifest_describes_every_command_without_a_login(tmp_path: Path, capsys
         "foods": False,
         "food-create": True,
         "food-delete": True,
+        "weights": False,
+        "weight-log": True,
+        "weight-delete": True,
     }
     assert all(c["usage"].startswith(f"mfp {c['name']}") and c["summary"] for c in m["commands"])
 
@@ -473,4 +476,45 @@ def test_food_delete_rejects_anything_but_an_id_before_calling_mfp(token_file: P
     fake = FakeMfp(logged_in())
     with pytest.raises(ValueError):
         Client(TokenStore(token_file), opener=fake).delete_food(food_id)
+    assert fake.requests == []
+
+
+def test_weights_asks_for_weight_between_the_dates(token_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    found = {"items": [{"id": "m1", "type": "Weight", "value": 82.4, "unit": "kilograms"}], "total_entries": 1}
+    fake = FakeMfp(logged_in(**{"/api/user-measurements/measurements": (found, [])}))
+    assert run(token_file, fake, "weights", "--from", "2026-10-01", "--to", "2026-10-25", "--limit", "5") == 0
+    assert json.loads(capsys.readouterr().out) == found["items"]
+    url = fake.requests[-1].full_url
+    assert "types=Weight" in url and "limit=5" in url and "from=2026-10-01" in url and "to=2026-10-25" in url
+
+
+def test_weight_log_puts_one_weigh_in(token_file: Path) -> None:
+    fake = FakeMfp(logged_in(**{"/api/user-measurements/measurements": ([{"id": "m2"}], [])}))
+    assert run(token_file, fake, "weight-log", "82.4", "--unit", "kg", "--date", "2026-10-25") == 0
+    assert fake.requests[-1].get_method() == "PUT"
+    assert fake.requests[-1].get_header("X-csrf-token") == "csrf-value"
+    assert sent(fake.requests[-1]) == {
+        "items": [{"date": "2026-10-25", "type": "Weight", "value": 82.4, "unit": "kilograms"}]
+    }
+
+
+def test_weight_log_refuses_an_unknown_unit_before_calling_mfp(token_file: Path) -> None:
+    fake = FakeMfp(logged_in())
+    with pytest.raises(ValueError):
+        Client(TokenStore(token_file), opener=fake).log_weight("2026-10-25", 82.4, "stone")
+    assert fake.requests == []
+
+
+def test_weight_delete_sends_delete_for_the_measurement(token_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeMfp(logged_in(**{"/api/user-measurements/measurements/m1": (b"", [])}))
+    assert run(token_file, fake, "weight-delete", "m1") == 0
+    assert fake.requests[-1].get_method() == "DELETE"
+    assert capsys.readouterr().out == "deleted weigh-in m1\n"
+
+
+@pytest.mark.parametrize("measurement_id", ["../types", "a/b", ""])
+def test_weight_delete_rejects_anything_but_an_id_before_calling_mfp(token_file: Path, measurement_id: str) -> None:
+    fake = FakeMfp(logged_in())
+    with pytest.raises(ValueError):
+        Client(TokenStore(token_file), opener=fake).delete_weight(measurement_id)
     assert fake.requests == []

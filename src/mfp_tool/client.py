@@ -297,6 +297,34 @@ class Client:
             self.login()
         self.request("DELETE", f"/api/services/foods/{food_id}")
 
+    def weights(self, since: str | None = None, until: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+        """Weigh-ins, newest first, optionally between two dates (YYYY-MM-DD)."""
+        if not self.username:
+            self.login()
+        query = {"types": "Weight", "limit": str(limit), "offset": "0"}
+        if since:
+            query["from"] = since
+        if until:
+            query["to"] = until
+        found = self.request("GET", "/api/user-measurements/measurements", query) or {}
+        return list(found.get("items") or []) if isinstance(found, dict) else list(found)
+
+    def log_weight(self, day: str, value: float, unit: str) -> Any:
+        """Saves a weigh-in for `day`; `unit` is kilograms or pounds. Returns MFP's answer."""
+        if unit not in ("kilograms", "pounds"):
+            raise ValueError(f"not a weight unit: {unit!r}")
+        if not self.username:
+            self.login()
+        item = {"date": day, "type": "Weight", "value": value, "unit": unit}
+        return self.request("PUT", "/api/user-measurements/measurements", body={"items": [item]})
+
+    def delete_weight(self, measurement_id: str) -> None:
+        """Deletes a weigh-in (or any measurement) by its id."""
+        _check_id(measurement_id, "measurement")
+        if not self.username:
+            self.login()
+        self.request("DELETE", f"/api/user-measurements/measurements/{measurement_id}")
+
 
 def _check_id(value: str, what: str) -> None:
     """Ids go into URL paths: letters, digits, `_` and `-` only."""

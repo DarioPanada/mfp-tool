@@ -64,6 +64,9 @@ mfp meals                               # saved meals with their foods' nutritio
 mfp foods [text]                        # foods you created
 mfp food-create "Chili (homemade)" --value 1 --unit serving --kcal 520 [--carbs G ...]  # e.g. a recipe
 mfp food-delete <food id>
+mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
+mfp weight-log 82.4 --unit kg [--date YYYY-MM-DD]              # save a weigh-in (kg or lb)
+mfp weight-delete <measurement id>
 mfp skill                # the Claude Code skill (SKILL.md), see above
 mfp manifest             # this tool described for a host such as the cockpit, as JSON
 ```
@@ -91,4 +94,5 @@ Tests never call MFP; they use a fake opener. Never commit a cookie or diary dat
 
 The client uses the website's own JSON routes (`https://www.myfitnesspal.com/api/...`), which proxy
 MFP API v2. Authentication is the session cookie plus, for `/api/services/*`, an `X-CSRF-Token`
-header and the CSRF cookie from `GET /api/auth/csrf`.
+header and the CSRF cookie from `GET /api/auth/csrf`. Weigh-ins are under
+`/api/user-measurements/measurements` (`GET` with `types=Weight`, `PUT` `{"items": [...]}`, `DELETE /{id}`).
