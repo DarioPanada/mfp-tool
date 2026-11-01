@@ -11,14 +11,18 @@ with one anonymous request before logging in.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import http.client
 import json
 import os
 import re
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,6 +31,8 @@ BASE_URL = "https://www.myfitnesspal.com"
 COOKIE = "__Secure-next-auth.session-token"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0 Safari/537.36"
 DEFAULT_TOKEN_FILE = Path("~/.config/mfp/session-token").expanduser()
+# Per socket operation (connect, send, each read), so one request can in theory take longer than this.
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 class MfpError(Exception):
@@ -35,6 +41,10 @@ class MfpError(Exception):
 
 class SessionExpired(MfpError):
     """The saved cookie no longer logs in; a fresh one has to be saved."""
+
+
+class LockBusy(Exception):
+    """Another run held the token file's lock for longer than we were willing to wait."""
 
 
 class _Response(Protocol):
@@ -53,6 +63,33 @@ class TokenStore:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+
+    @contextlib.contextmanager
+    def lock(self, wait: float) -> Iterator[None]:
+        """Holds the exclusive lock of this token file, waiting at most `wait` seconds or raising LockBusy.
+
+        Each run spends a single-use token, so load it only once this is held. The kernel drops the
+        lock when the process ends, however it ends, so a killed run can't leave it stuck. The lock
+        file stays: removing it would let two runs hold "the" lock on different files.
+        """
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise LockBusy(
+                            f"another mfp run has held the session lock for over {wait:g} s; "
+                            "nothing was sent to MFP, try again"
+                        ) from None
+                    time.sleep(0.05)
+            yield
+        finally:
+            os.close(fd)
 
     def load(self) -> str:
         try:
@@ -85,13 +122,22 @@ def session_token_from(set_cookies: list[str]) -> str | None:
 
 
 class Client:
-    def __init__(self, store: TokenStore, opener: Opener = urllib.request.urlopen, base_url: str = BASE_URL) -> None:
+    def __init__(
+        self,
+        store: TokenStore,
+        opener: Opener = urllib.request.urlopen,
+        base_url: str = BASE_URL,
+        last_start: float | None = None,
+    ) -> None:
+        """`last_start`: a `time.monotonic()` after which no new request is sent."""
         if not base_url.startswith("https://"):
             raise ValueError("base_url must be https")
         self.store = store
         self.opener = opener
         self.base_url = base_url
+        self.last_start = last_start
         self.token = store.load()
+        self._tokens = {self.token}  # every token this client has held, kept out of error text
         self.cookies: dict[str, str] = {}  # other cookies (CSRF, Cloudflare), for this client only
         self.csrf: str | None = None
         self.username: str | None = None
@@ -106,13 +152,26 @@ class Client:
             return
         new = session_token_from(set_cookies)
         if new and new != self.token:
-            self.store.save(new)
+            self._tokens.add(new)
+            try:
+                self.store.save(new)
+            except OSError as e:
+                raise MfpError(f"couldn't save the refreshed cookie: {e.strerror}") from None
             self.token = new
+
+    def _detail(self, raw: bytes, limit: int) -> str:
+        """Up to `limit` characters of a response body, for an error message, without any token."""
+        text = raw.decode(errors="replace")
+        for token in self._tokens:
+            text = text.replace(token, "[token]")
+        return text[:limit]
 
     def request(
         self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None, session: bool = True
     ) -> Any:
         """Calls MFP and returns the decoded JSON; `session=False` leaves the session cookie out."""
+        if self.last_start is not None and time.monotonic() > self.last_start:
+            raise MfpError(f"{method} {path}: not sent, too late to finish in time")
         url = self.base_url + path + ("?" + urllib.parse.urlencode(query) if query else "")
         cookies = [f"{k}={v}" for k, v in self.cookies.items()]
         if session:
@@ -129,19 +188,20 @@ class Client:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)  # noqa: S310 - https only, see __init__
         try:
-            with self.opener(req, timeout=30) as resp:
-                self._absorb(resp.headers, session)
+            with self.opener(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+                self._absorb(resp.headers, session)  # before the body: a run lost during it keeps the cookie
                 raw = resp.read()
         except urllib.error.HTTPError as e:
             self._absorb(e.headers, session)
-            detail = e.read()[:300].decode(errors="replace")
-            raise MfpError(f"{method} {path}: HTTP {e.code} {detail}") from None
+            raise MfpError(f"{method} {path}: HTTP {e.code} {self._detail(e.read(), 300)}") from None
+        except (OSError, http.client.HTTPException) as e:
+            raise MfpError(f"{method} {path}: couldn't reach MFP: {e}") from None
         if not raw:
             return None
         try:
             return json.loads(raw)
         except ValueError:
-            raise MfpError(f"{method} {path}: expected JSON, got {raw[:60]!r}") from None
+            raise MfpError(f"{method} {path}: expected JSON, got {self._detail(raw, 60)!r}") from None
 
     def login(self) -> str:
         """Checks the session (which also refreshes the cookie) and fetches a CSRF token."""

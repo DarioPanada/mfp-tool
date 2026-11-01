@@ -318,6 +318,7 @@ def test_manifest_describes_every_command_without_a_login(tmp_path: Path, capsys
         "weights": False,
         "weight-log": True,
         "weight-delete": True,
+        "app-summary": False,
     }
     assert all(c["usage"].startswith(f"mfp {c['name']}") and c["summary"] for c in m["commands"])
 
