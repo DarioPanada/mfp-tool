@@ -34,79 +34,121 @@ LOCK_WAIT_SECONDS = MOST_REQUESTS_IN_A_RUN * REQUEST_TIMEOUT_SECONDS + 20
 
 # What `mfp manifest` tells a host such as the cockpit: every command Claude may run, and which
 # ones change the diary (a host asks before running those). Every command that logs in, read-only
-# ones too, rewrites the cookie file when MFP refreshes it; `writes` is about the diary only.
+# ones too, rewrites the cookie file when MFP refreshes it; `writes` is about the diary only. `label` is what a
+# conversation shows for a step that ran the command when it has no AI summary: past tense, for the person.
 COMMANDS = [
-    {"name": "session", "usage": "mfp session", "summary": "check the login, refresh the cookie", "writes": False},
-    {"name": "diary", "usage": "mfp diary [YYYY-MM-DD]", "summary": "food entries for a day, as JSON", "writes": False},
+    {
+        "name": "session",
+        "usage": "mfp session",
+        "summary": "check the login, refresh the cookie",
+        "writes": False,
+        "label": "Checked the MyFitnessPal login",
+    },
+    {
+        "name": "diary",
+        "usage": "mfp diary [YYYY-MM-DD]",
+        "summary": "food entries for a day, as JSON",
+        "writes": False,
+        "label": "Read the food diary",
+    },
     {
         "name": "search",
         "usage": "mfp search <text> [--max N] [--page P] [--country CC]",
         "summary": "search MFP's food database, as JSON",
         "writes": False,
+        "label": "Searched for a food",
     },
     {
         "name": "log",
         "usage": "mfp log <food id> <food version> --meal M --servings N --value V --unit U --multiplier X [--date D]",
         "summary": "add a food entry to the diary",
         "writes": True,
+        "label": "Logged food",
     },
-    {"name": "delete", "usage": "mfp delete <entry id>", "summary": "delete a diary entry", "writes": True},
+    {
+        "name": "delete",
+        "usage": "mfp delete <entry id>",
+        "summary": "delete a diary entry",
+        "writes": True,
+        "label": "Removed a diary entry",
+    },
     {
         "name": "quick-add",
         "usage": "mfp quick-add --kcal N --meal M [--carbs G] [--fat G] [--protein G] [--date D]",
         "summary": "add calories (and macros) to a meal without a food",
         "writes": True,
+        "label": "Logged calories",
     },
     {
         "name": "exercises",
         "usage": "mfp exercises [YYYY-MM-DD]",
         "summary": "exercise entries for a day, as JSON",
         "writes": False,
+        "label": "Read the exercise entries",
     },
     {
         "name": "exercise-search",
         "usage": "mfp exercise-search <text>",
         "summary": "search MFP's exercises, as JSON",
         "writes": False,
+        "label": "Searched for an exercise",
     },
     {
         "name": "exercise-log",
         "usage": "mfp exercise-log <exercise id> --minutes N --kcal K [--date D] [--time HH:MM]",
         "summary": "add an exercise entry (calories burned) to the diary",
         "writes": True,
+        "label": "Logged exercise",
     },
-    {"name": "meals", "usage": "mfp meals", "summary": "saved meals and their foods, as JSON", "writes": False},
-    {"name": "foods", "usage": "mfp foods [text]", "summary": "foods this account created, as JSON", "writes": False},
+    {
+        "name": "meals",
+        "usage": "mfp meals",
+        "summary": "saved meals and their foods, as JSON",
+        "writes": False,
+        "label": "Read the saved meals",
+    },
+    {
+        "name": "foods",
+        "usage": "mfp foods [text]",
+        "summary": "foods this account created, as JSON",
+        "writes": False,
+        "label": "Read your own foods",
+    },
     {
         "name": "food-create",
         "usage": "mfp food-create <description> --kcal K --value V --unit U [--brand B] [--carbs G] [--fat G] "
         "[--protein G] [--sugar G] [--fiber G] [--sodium MG] [--country CC]",
         "summary": "create a private food, such as a recipe per serving",
         "writes": True,
+        "label": "Created a food",
     },
     {
         "name": "food-delete",
         "usage": "mfp food-delete <food id>",
         "summary": "delete a food this account created",
         "writes": True,
+        "label": "Deleted a food",
     },
     {
         "name": "weights",
         "usage": "mfp weights [--from D] [--to D] [--limit N]",
         "summary": "weigh-ins, newest first, as JSON",
         "writes": False,
+        "label": "Read the weigh-ins",
     },
     {
         "name": "weight-log",
         "usage": "mfp weight-log <weight> --unit kg|lb [--date D]",
         "summary": "save a weigh-in",
         "writes": True,
+        "label": "Logged a weigh-in",
     },
     {
         "name": "weight-delete",
         "usage": "mfp weight-delete <measurement id>",
         "summary": "delete a weigh-in",
         "writes": True,
+        "label": "Removed a weigh-in",
     },
 ]
 
