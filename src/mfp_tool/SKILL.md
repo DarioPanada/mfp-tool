@@ -28,12 +28,11 @@ mfp food-delete <food id>
 mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
 mfp weight-log <weight> --unit kg|lb [--date YYYY-MM-DD]       # save a weigh-in
 mfp weight-delete <measurement id>
-mfp app-summary                        # today's totals, for the cockpit's daily page
 ```
 
 Exit status: 0 ok, 1 error (message on stderr), **2 the login has expired**, **3 another `mfp` run held the session lock for too long** (nothing was sent to MFP: try again).
 
-Only one `mfp` runs at a time: others wait for it, up to 200 s. To answer Dario, use `mfp diary`: `mfp app-summary` is for the cockpit, and whether its totals include quick adds is unverified.
+Only one `mfp` runs at a time: others wait for it, up to 200 s.
 
 ## Reading the diary
 

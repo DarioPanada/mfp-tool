@@ -127,15 +127,12 @@ class Client:
         store: TokenStore,
         opener: Opener = urllib.request.urlopen,
         base_url: str = BASE_URL,
-        last_start: float | None = None,
     ) -> None:
-        """`last_start`: a `time.monotonic()` after which no new request is sent."""
         if not base_url.startswith("https://"):
             raise ValueError("base_url must be https")
         self.store = store
         self.opener = opener
         self.base_url = base_url
-        self.last_start = last_start
         self.token = store.load()
         self._tokens = {self.token}  # every token this client has held, kept out of error text
         self.cookies: dict[str, str] = {}  # other cookies (CSRF, Cloudflare), for this client only
@@ -170,8 +167,6 @@ class Client:
         self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None, session: bool = True
     ) -> Any:
         """Calls MFP and returns the decoded JSON; `session=False` leaves the session cookie out."""
-        if self.last_start is not None and time.monotonic() > self.last_start:
-            raise MfpError(f"{method} {path}: not sent, too late to finish in time")
         url = self.base_url + path + ("?" + urllib.parse.urlencode(query) if query else "")
         cookies = [f"{k}={v}" for k, v in self.cookies.items()]
         if session:
