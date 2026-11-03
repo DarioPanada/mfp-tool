@@ -320,6 +320,8 @@ def test_manifest_describes_every_command_without_a_login(tmp_path: Path, capsys
         "weight-delete": True,
     }
     assert all(c["usage"].startswith(f"mfp {c['name']}") and c["summary"] for c in m["commands"])
+    # what a conversation shows for the step when it has no AI summary (the cockpit drops a label over 60)
+    assert all(0 < len(c["label"]) <= 60 and c["label"] == c["label"].strip() for c in m["commands"])
 
 
 def test_manifest_lists_every_command_but_its_own_helpers() -> None:

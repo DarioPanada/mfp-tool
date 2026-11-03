@@ -91,8 +91,9 @@ mfp manifest             # this tool described for a host such as the cockpit, a
 Exit status: 0 ok, 1 error, 2 the session has expired, 3 another run held the lock for too long.
 
 `mfp manifest` needs no login. It prints `manifest` (format version, 1), `name`, `version`,
-`description`, `commands` (each with `name`, `usage`, `summary` and `writes`, true for the commands
-that change the diary), `app` and `skill` (the text of `mfp skill`). The cockpit reads it to list
+`description`, `commands` (each with `name`, `usage`, `summary`, `writes`, true for the commands
+that change the diary, and `label`, what a conversation shows for a step that ran it when there's no
+AI summary), `app` and `skill` (the text of `mfp skill`). The cockpit reads it to list
 the tool and to set up the conversations of a project that uses it. `writes` is about the diary
 only: every command that logs in can rotate the cookie.
 
