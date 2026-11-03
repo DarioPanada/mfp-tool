@@ -7,15 +7,50 @@ import datetime
 import importlib.metadata
 import importlib.resources
 import json
+import math
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
-from .client import DEFAULT_TOKEN_FILE, Client, MfpError, Opener, SessionExpired, TokenStore
+from .client import (
+    DEFAULT_TOKEN_FILE,
+    REQUEST_TIMEOUT_SECONDS,
+    Client,
+    LockBusy,
+    MfpError,
+    Opener,
+    SessionExpired,
+    TokenStore,
+)
 
 EXIT_EXPIRED = 2
 EXIT_ERROR = 1
+EXIT_BUSY = 3
+
+# The lock's wait is above a full run of the heaviest command: `log` by meal name on another day is
+# the login (3 requests), two diary reads and the post. Giving up is always safe: nothing is sent.
+MOST_REQUESTS_IN_A_RUN = 6
+LOCK_WAIT_SECONDS = MOST_REQUESTS_IN_A_RUN * REQUEST_TIMEOUT_SECONDS + 20
+
+# `app-summary` runs under a host that SIGKILLs it (the cockpit, at 45 s), which can't be caught, and
+# a kill between MFP spending the token and its answer being saved loses the session. Four requests
+# of 30 s can't fit in 45 s, so instead no request starts unless its whole timeout fits before the
+# kill: past that the run gives up, with the token it has. Waiting for the lock is harmless but uses
+# the same clock, so it stops early enough to leave room for the run.
+HOST_KILL_SECONDS = 45
+SUMMARY_LAST_START_SECONDS = 13  # after the run starts; 2 s spare for process start-up and an ssh hop
+SUMMARY_LOCK_WAIT_SECONDS = 8
+
+SIGNED_OUT = "MyFitnessPal needs you to sign in again"
+UNREACHABLE = "Couldn't reach MyFitnessPal just now"
+# What the diary's food_entry request should return. `exercises` has seen other types come back from
+# this route, so it's checked. None: nothing says every entry carries `type`, and dropping real food
+# would show a wrong figure as fact.
+FOOD_ENTRY_TYPES = (None, "food_entry", "quick_add")
+MOST_SUMMARY_ROWS = 8
 
 # What `mfp manifest` tells a host such as the cockpit: every command Claude may run, and which
 # ones change the diary (a host asks before running those). Every command that logs in, read-only
@@ -93,7 +128,17 @@ COMMANDS = [
         "summary": "delete a weigh-in",
         "writes": True,
     },
+    # writes is about the diary: this logs in like every other command, so it still rotates the cookie.
+    {
+        "name": "app-summary",
+        "usage": "mfp app-summary",
+        "summary": "today's calories, macros and calories per meal, for a host's daily page, as JSON",
+        "writes": False,
+    },
 ]
+
+# A host's daily page for this tool. `summary` is a command above with writes false.
+APP = {"label": "Food", "summary": "app-summary", "chat": {"label": "Log food"}, "private": True}
 
 WEIGHT_UNITS = {"kg": "kilograms", "lb": "pounds"}
 
@@ -167,12 +212,14 @@ def build_parser(today: str) -> argparse.ArgumentParser:
     weight_log.add_argument("--date", default=today, help="YYYY-MM-DD (default today)")
     weight_delete = sub.add_parser("weight-delete", help="delete a weigh-in by its id")
     weight_delete.add_argument("measurement_id")
+    sub.add_parser("app-summary", help="today's calories, macros and calories per meal, for a host, as JSON")
     sub.add_parser("skill", help="print the Claude Code skill for mfp (SKILL.md)")
     sub.add_parser("manifest", help="describe this tool for a host such as the cockpit, as JSON")
     return parser
 
 
 def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen) -> int:
+    started = time.monotonic()
     today = datetime.date.today().isoformat()
     args = build_parser(today).parse_args(argv)
 
@@ -183,6 +230,20 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
         _print_json(_manifest())
         return 0
 
+    summary = args.command == "app-summary"
+    try:
+        with TokenStore(args.token_file).lock(SUMMARY_LOCK_WAIT_SECONDS if summary else LOCK_WAIT_SECONDS):
+            return _app_summary(args.token_file, opener, started) if summary else _run(args, opener, today)
+    except LockBusy as e:
+        print(f"mfp: {e}", file=sys.stderr)
+        return EXIT_BUSY
+    except OSError as e:
+        print(f"mfp: can't take the session lock or write output: {e}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+def _run(args: argparse.Namespace, opener: Opener, today: str) -> int:
+    """One command, holding the lock: the token is read here, and rotated by the requests that follow."""
     try:
         client = Client(TokenStore(args.token_file), opener=opener)
         user = client.login()
@@ -245,6 +306,50 @@ def main(argv: list[str] | None = None, opener: Opener = urllib.request.urlopen)
     return 0
 
 
+def _app_summary(token_file: Path, opener: Opener, started: float) -> int:
+    """Prints the summary, or `unavailable` in a sentence for the owner. Never exception text."""
+    now = datetime.datetime.now().astimezone()
+    result: dict[str, Any]
+    try:
+        client = Client(TokenStore(token_file), opener=opener, last_start=started + SUMMARY_LAST_START_SECONDS)
+        result = summarize(client.diary(now.date().isoformat()), now)
+    except SessionExpired:
+        result = {"unavailable": SIGNED_OUT}
+    except (MfpError, OSError, AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        # The last ones: an answer of a shape we don't know. Better no figure than a wrong one.
+        result = {"unavailable": UNREACHABLE}
+    _print_json(result)
+    return 0
+
+
+def summarize(entries: list[dict[str, Any]], now: datetime.datetime) -> dict[str, Any]:
+    """A host's summary of a day's diary entries: calories, macros, and calories per meal in diary order."""
+    macros = {"protein": 0.0, "carbohydrates": 0.0, "fat": 0.0}
+    total = 0.0
+    meals: dict[str, float] = {}
+    positions: dict[str, int] = {}
+    for entry in entries:
+        if entry.get("type") not in FOOD_ENTRY_TYPES:
+            continue
+        contents = entry.get("nutritional_contents") or {}
+        energy = (contents.get("energy") or {}).get("value") or 0  # any nutrient can be null
+        total += energy
+        for nutrient in macros:
+            macros[nutrient] += contents.get(nutrient) or 0
+        meal = entry.get("meal_name") or "Other"
+        meals[meal] = meals.get(meal, 0) + energy
+        if entry.get("meal_position") is not None:
+            positions.setdefault(meal, entry["meal_position"])
+    ordered = sorted(meals, key=lambda meal: positions.get(meal, math.inf))  # stable: unknown ones as seen, last
+    return {
+        "headline": {"value": f"{round(total):,} kcal", "label": "Eaten today"},
+        "note": f"Protein {round(macros['protein']):,} g, carbs {round(macros['carbohydrates']):,} g, "
+        f"fat {round(macros['fat']):,} g.",
+        "rows": [{"label": meal, "value": f"{round(meals[meal]):,}"} for meal in ordered[:MOST_SUMMARY_ROWS]],
+        "asOf": now.isoformat(timespec="seconds"),
+    }
+
+
 def _print_json(value: object) -> None:
     json.dump(value, sys.stdout, indent=1, ensure_ascii=False)
     print()
@@ -269,6 +374,7 @@ def _manifest() -> dict[str, object]:
         "description": "MyFitnessPal diary: read and log food, quick adds, exercise and weigh-ins; search foods and "
         "exercises; create foods such as recipes.",
         "commands": COMMANDS,
+        "app": APP,
         "skill": _skill(),
     }
 

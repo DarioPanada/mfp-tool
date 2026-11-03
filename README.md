@@ -48,6 +48,20 @@ To give a machine its own session:
 
 The session lasts 30 days from its last use. When it has expired the tool exits with status 2.
 
+### One run at a time
+
+Two runs at once could spend the same token and lose the session, so every command that talks to
+MFP holds an exclusive lock on `session-token.lock`, beside the cookie file, for its whole run, and
+reads the cookie only once it holds the lock. A run waits up to 200 s for the lock, above the 180 s
+of the heaviest command at 30 s per request, and then exits with status 3 having sent nothing. It
+never runs without the lock. The kernel frees the lock when a process ends, however it ends, so
+there is nothing to clean up: leave the lock file in place.
+
+The lock can't protect a run that is killed. Once MFP has received a request it may have spent the
+old cookie, and if the process dies before the new one arrives, that cookie is gone and the session
+needs a fresh one from a browser. The cookie is saved as soon as a response's headers arrive, so
+only that gap is exposed, not the reading of the body.
+
 ## Use
 
 ```sh
@@ -67,6 +81,7 @@ mfp food-delete <food id>
 mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
 mfp weight-log 82.4 --unit kg [--date YYYY-MM-DD]              # save a weigh-in (kg or lb)
 mfp weight-delete <measurement id>
+mfp app-summary          # today's calories, macros and calories per meal, for a host, as JSON
 mfp skill                # the Claude Code skill (SKILL.md), see above
 mfp manifest             # this tool described for a host such as the cockpit, as JSON
 ```
@@ -74,12 +89,23 @@ mfp manifest             # this tool described for a host such as the cockpit, a
 `--meal` is a meal name looked up in today's diary (and the target day's), or a meal position
 (0 is Breakfast). The serving size flags come from one of the food's `serving_sizes`.
 
-Exit status: 0 ok, 1 error, 2 the session has expired.
+Exit status: 0 ok, 1 error, 2 the session has expired, 3 another run held the lock for too long.
 
 `mfp manifest` needs no login. It prints `manifest` (format version, 1), `name`, `version`,
 `description`, `commands` (each with `name`, `usage`, `summary` and `writes`, true for the commands
-that change the diary) and `skill` (the text of `mfp skill`). The cockpit reads it to list the tool
-and to set up the conversations of a project that uses it.
+that change the diary), `app` (the tool's part of a host's daily page) and `skill` (the text of
+`mfp skill`). The cockpit reads it to list the tool and to set up the conversations of a project
+that uses it. `writes` is about the diary only: every command that logs in can rotate the cookie.
+
+`mfp app-summary` prints what a host's daily page shows: `headline`, `note` (the macros), `rows` (one
+per meal, in diary order) and `asOf`; or `{"unavailable": "<a sentence>"}` with exit status 0 when
+the session has expired or MFP can't be reached. It makes four requests. Hosts may kill it (the
+cockpit does, with SIGKILL, at 45 s), so it waits at most 8 s for the lock and starts no request
+after 13 s, which leaves each request its full 30 s before such a kill. The lock wait still ends in
+status 3, and running out of time in `unavailable`.
+
+A quick add is counted if MFP's diary returns it. Whether it does is unverified: the tool asks for
+`types=food_entry`, and quick adds are logged with the type `quick_add`.
 
 ## Development
 

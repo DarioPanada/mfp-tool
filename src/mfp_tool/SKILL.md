@@ -28,9 +28,12 @@ mfp food-delete <food id>
 mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
 mfp weight-log <weight> --unit kg|lb [--date YYYY-MM-DD]       # save a weigh-in
 mfp weight-delete <measurement id>
+mfp app-summary                        # today's totals, for the cockpit's daily page
 ```
 
-Exit status: 0 ok, 1 error (message on stderr), **2 the login has expired**.
+Exit status: 0 ok, 1 error (message on stderr), **2 the login has expired**, **3 another `mfp` run held the session lock for too long** (nothing was sent to MFP: try again).
+
+Only one `mfp` runs at a time: others wait for it, up to 200 s. To answer Dario, use `mfp diary`: `mfp app-summary` is for the cockpit, and whether its totals include quick adds is unverified.
 
 ## Reading the diary
 
@@ -102,5 +105,6 @@ and date, then `mfp weight-log`. Ask before `mfp weight-delete` too, naming the 
 
 - **Never read, print, copy or log `~/.config/mfp/session-token`** or any cookie value, not even partly, and not while debugging. Only `mfp` touches it.
 - Exit status 2 means the session has expired. Don't try to log in. Ask Dario to save a fresh cookie, following "The session cookie" in the mfp-tool README.
+- Never kill a running `mfp` or run it under a short `timeout`: a run killed mid-request can lose the session for good. Never delete `session-token.lock`, or work around the lock.
 - Only change the diary, his foods or his weigh-ins with `mfp log`, `quick-add`, `exercise-log`, `food-create`, `delete`, `food-delete`, `weight-log` and `weight-delete`, and only after Dario confirms. Don't call MFP's API another way to add or change entries.
 - Diary and weight data are personal. Never commit it to a repository, including mfp-tool, which is public.
