@@ -1,4 +1,4 @@
-"""One real `mfp` process against a fake MFP kept in files, for test_daily.py. Never uses the network.
+"""One real `mfp` process against a fake MFP kept in files, for test_lock.py. Never uses the network.
 
 Usage: two_process_run.py <name> <state dir> <gate path or -> <before-response|in-body> <mfp command>
 

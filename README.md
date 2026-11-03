@@ -81,7 +81,6 @@ mfp food-delete <food id>
 mfp weights [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]   # weigh-ins, newest first
 mfp weight-log 82.4 --unit kg [--date YYYY-MM-DD]              # save a weigh-in (kg or lb)
 mfp weight-delete <measurement id>
-mfp app-summary          # today's calories, macros and calories per meal, for a host, as JSON
 mfp skill                # the Claude Code skill (SKILL.md), see above
 mfp manifest             # this tool described for a host such as the cockpit, as JSON
 ```
@@ -93,19 +92,14 @@ Exit status: 0 ok, 1 error, 2 the session has expired, 3 another run held the lo
 
 `mfp manifest` needs no login. It prints `manifest` (format version, 1), `name`, `version`,
 `description`, `commands` (each with `name`, `usage`, `summary` and `writes`, true for the commands
-that change the diary), `app` (the tool's part of a host's daily page) and `skill` (the text of
-`mfp skill`). The cockpit reads it to list the tool and to set up the conversations of a project
-that uses it. `writes` is about the diary only: every command that logs in can rotate the cookie.
+that change the diary), `app` and `skill` (the text of `mfp skill`). The cockpit reads it to list
+the tool and to set up the conversations of a project that uses it. `writes` is about the diary
+only: every command that logs in can rotate the cookie.
 
-`mfp app-summary` prints what a host's daily page shows: `headline`, `note` (the macros), `rows` (one
-per meal, in diary order) and `asOf`; or `{"unavailable": "<a sentence>"}` with exit status 0 when
-the session has expired or MFP can't be reached. It makes four requests. Hosts may kill it (the
-cockpit does, with SIGKILL, at 45 s), so it waits at most 8 s for the lock and starts no request
-after 13 s, which leaves each request its full 30 s before such a kill. The lock wait still ends in
-status 3, and running out of time in `unavailable`.
-
-A quick add is counted if MFP's diary returns it. Whether it does is unverified: the tool asks for
-`types=food_entry`, and quick adds are logged with the type `quick_add`.
+`app` is `{"label": "Food", "private": true}`. It makes `mfp` one of the tools of a host's daily
+chat, under that label. `private` says its data is personal, for a host to keep out of anything it
+shares or summarises. There is no summary command: the host's daily page is a chat, in which Claude
+runs the commands above.
 
 ## Development
 
