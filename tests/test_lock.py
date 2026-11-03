@@ -62,7 +62,7 @@ def lock_is_free(token_file: Path) -> bool:
 
 @pytest.fixture
 def short_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "LOCK_WAIT_SECONDS", 0.2, raising=False)
+    monkeypatch.setattr(cli, "LOCK_WAIT_SECONDS", 0.2)
 
 
 def no_network(req: urllib.request.Request, timeout: float) -> FakeResponse:
@@ -473,7 +473,7 @@ def test_lock_timeout_text_has_no_token(
 
 
 def test_manifest_declares_a_daily_tool_and_nothing_more(capsys: pytest.CaptureFixture[str]) -> None:
-    """The host's contract: a label of at most 30 characters, an optional pin and the private flag."""
+    """mfp declares a label (at most 30 characters) and the private flag, and nothing else: it has no views to pin."""
     assert main(["manifest"], opener=no_network) == 0
     app = json.loads(capsys.readouterr().out)["app"]
     assert app == {"label": "Food", "private": True}
